@@ -14,7 +14,7 @@ SERVICENOW_INSTANCE = os.getenv('SERVICENOW_INSTANCE')
 SERVICENOW_USERNAME = os.getenv('SERVICENOW_USERNAME')
 SERVICENOW_PASSWORD = os.getenv('SERVICENOW_PASSWORD')
 OLLAMA_BASE_URL = os.getenv('OLLAMA_BASE_URL')
-MODEL = "gpt-oss:latest"
+MODEL = os.getenv('MODEL')
 
 openai = OpenAI(base_url=OLLAMA_BASE_URL, api_key='ollama')
 
@@ -25,13 +25,13 @@ system_message = """
         """
 
 def get_incidents_assignedto_username_servicenow(username):
-
     url = f"https://{SERVICENOW_INSTANCE}/api/now/table/incident"
     headers = {"Content-Type":"application/json","Accept":"application/json"}
     params = {
         "sysparm_query": "stateNOT IN6,7,8^assigned_to.user_name="+username,
         "sysparm_limit": 10,
-        "sysparm_fields": ",".join(SYS_PARM_FIELDS.keys())
+        "sysparm_fields": ",".join(SYS_PARM_FIELDS.keys()),
+        "sysparm_display_value": "all"
     }
     try:
         response = requests.get(
@@ -55,7 +55,8 @@ def get_incident_by_number_servicenow(number):
     params = {
         "sysparm_query": "number="+number,
         "sysparm_limit": 1,
-        "sysparm_fields": ",".join(SYS_PARM_FIELDS.keys())
+        "sysparm_fields": ",".join(SYS_PARM_FIELDS.keys()),
+        "sysparm_display_value": "all"
     }
     try:
         response = requests.get(
@@ -85,26 +86,30 @@ def format_incidents_for_prompt(incidents):
     for incident in incidents[:10]:  # Limit to 10 incidents
         incident_data = {}
         
-        # Iterar sobre cada campo en la configuración
         for field_name, field_config in SYS_PARM_FIELDS.items():
             label = field_config["label"]
             empty_value = field_config["empty_value"]
             
-            # Campo simple (no anidado)
-            value = incident.get(field_name, None)
+            field_value = incident.get(field_name, None)
             
-            # Si el valor está vacío o None, usar valor por defecto
-            if not value or str(value).strip() == '':
-                incident_data[label] = empty_value
+            # Manejar campos que tienen estructura display_value/value
+            if isinstance(field_value, dict) and 'display_value' in field_value:
+                # Usar display_value para mostrar al usuario
+                display_value = field_value.get('display_value', '')
+                if not display_value or str(display_value).strip() == '':
+                    incident_data[label] = empty_value
+                else:
+                    incident_data[label] = display_value
             else:
-                incident_data[label] = value
-        
+                # Campo simple
+                if not field_value or str(field_value).strip() == '':
+                    incident_data[label] = empty_value
+                else:
+                    incident_data[label] = field_value
         formatted.append(incident_data)
-    
     return json.dumps(formatted, indent=2, ensure_ascii=False)
 
 def get_incidents_assignedto_username(username):
-    
     incidents = get_incidents_assignedto_username_servicenow(username)
     if isinstance(incidents, list):
         incidents_data = format_incidents_for_prompt(incidents)
