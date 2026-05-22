@@ -1,3 +1,18 @@
+import os
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
+
+#SERVICENOW CONNECTION
+SERVICENOW_INSTANCE = os.getenv('SERVICENOW_INSTANCE')
+SERVICENOW_USERNAME = os.getenv('SERVICENOW_USERNAME')
+SERVICENOW_PASSWORD = os.getenv('SERVICENOW_PASSWORD')
+
+#OLLAMA
+OLLAMA_BASE_URL = os.getenv('OLLAMA_BASE_URL')
+MODEL = os.getenv('MODEL')
+
+#INCIDENT FIELDS
 SYS_PARM_FIELDS = {
     "assigned_to.user_name": {
         "label": "Assigned to",
