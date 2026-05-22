@@ -18,23 +18,18 @@ MODEL = "gpt-oss:latest"
 
 openai = OpenAI(base_url=OLLAMA_BASE_URL, api_key='ollama')
 
-incidents_cache = []
-
-assigned_to = "dgtes"
-
 system_message = """
         You are an IT operations assistant. You have access to current ServiceNow incidents.
         When asked about incidents, use the provided incident data to answer questions.
         Keep responses concise and professional.
         """
 
-def get_incidents_servicenow():
-    global incidents_cache
+def get_incidents_assignedto_username_servicenow(username):
 
     url = f"https://{SERVICENOW_INSTANCE}/api/now/table/incident"
     headers = {"Content-Type":"application/json","Accept":"application/json"}
     params = {
-        "sysparm_query": "stateNOT IN6,7,8^assigned_to.user_name="+assigned_to,
+        "sysparm_query": "stateNOT IN6,7,8^assigned_to.user_name="+username,
         "sysparm_limit": 10,
         "sysparm_fields": ",".join(SYS_PARM_FIELDS.keys())
     }
@@ -47,12 +42,34 @@ def get_incidents_servicenow():
         )
         if response.status_code != 200:
             raise Exception(f'Status:', response.status_code, 'Headers:', response.headers, 'Error Response:',response.json())
-        
-        incidents = response.json()['result']
-        incidents_cache = incidents
+
         if DEBUG:
             print(json.dumps(response.json(), ensure_ascii=False))
-        return incidents
+        return response.json()['result']
+    except Exception as e:
+        return f"Error fetching incidents: {str(e)}"
+    
+def get_incident_by_number_servicenow(number):
+    url = f"https://{SERVICENOW_INSTANCE}/api/now/table/incident"
+    headers = {"Content-Type":"application/json","Accept":"application/json"}
+    params = {
+        "sysparm_query": "number="+number,
+        "sysparm_limit": 1,
+        "sysparm_fields": ",".join(SYS_PARM_FIELDS.keys())
+    }
+    try:
+        response = requests.get(
+            url,
+            auth=(SERVICENOW_USERNAME, SERVICENOW_PASSWORD),
+            headers=headers,
+            params=params
+        )
+        if response.status_code != 200:
+            raise Exception(f'Status:', response.status_code, 'Headers:', response.headers, 'Error Response:',response.json())
+        
+        if DEBUG:
+            print(json.dumps(response.json(), ensure_ascii=False))
+        return response.json()['result']
     except Exception as e:
         return f"Error fetching incidents: {str(e)}"
     
@@ -86,33 +103,55 @@ def format_incidents_for_prompt(incidents):
     
     return json.dumps(formatted, indent=2, ensure_ascii=False)
 
-def get_incidents():
-    if not incidents_cache:
-        incidents = get_incidents_servicenow()
-        if isinstance(incidents, list):
-            incidents_data = format_incidents_for_prompt(incidents)
-        else:
-            incidents_data = incidents  # Error message
+def get_incidents_assignedto_username(username):
+    
+    incidents = get_incidents_assignedto_username_servicenow(username)
+    if isinstance(incidents, list):
+        incidents_data = format_incidents_for_prompt(incidents)
     else:
-        incidents_data = format_incidents_for_prompt(incidents_cache)
+        incidents_data = incidents  # Error message
+    
     return incidents_data
 
-get_incidents_function = {
-    "name": "get_incidents",
-    "description": "Get a JSON-formatted list of all ServiceNow incidents",
+def get_incident_by_number(number):
+    return format_incidents_for_prompt(get_incident_by_number_servicenow(number))
+
+get_incidents_assignedto_function = {
+    "name": "get_incidents_assignedto_username",
+    "description": "Get all the incidents assigned to an user using his User Id",
     "parameters": {
         "type": "object",
-        #"properties": {
-        #    "destination_city": {
-        #        "type": "string",
-        #        "description": "The city that the customer wants to travel to",
-        #    },
-        #},
-        #"required": ["destination_city"],
+        "properties": {
+            "username": {
+                "type": "string",
+                "description": "Employee's user id",
+            },
+        },
+        "required": ["useername"],
         "additionalProperties": False
     }
 }
-tools = [{"type": "function", "function": get_incidents_function}]
+
+get_incident_by_number_function = {
+    "name": "get_incident_by_number",
+    "description": "Get a single incident by incident number.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "number": {
+                "type": "string",
+                "description": "Incident ID. Should start by 'INC' a followed by 7 digits. Example: INC0123456",
+            },
+        },
+        "required": ["number"],
+        "additionalProperties": False
+    }
+}
+
+tools = [
+    {"type": "function", "function": get_incidents_assignedto_function},
+    {"type": "function", "function": get_incident_by_number_function}
+]
 
 def chat(message, history):
     history = [{"role":h["role"], "content":h["content"]} for h in history]
@@ -131,10 +170,19 @@ def chat(message, history):
 def handle_tool_calls(message):
     responses = []
     for tool_call in message.tool_calls:
-        if tool_call.function.name == "get_incidents":
-            #arguments = json.loads(tool_call.function.arguments)
-            #city = arguments.get('destination_city')
-            details = get_incidents()
+        if tool_call.function.name == "get_incidents_assignedto_username":
+            arguments = json.loads(tool_call.function.arguments)
+            username = arguments.get('username')
+            details = get_incidents_assignedto_username(username)
+            responses.append({
+                "role": "tool",
+                "content": details,
+                "tool_call_id": tool_call.id
+            })
+        elif tool_call.function.name == "get_incident_by_number":
+            arguments = json.loads(tool_call.function.arguments)
+            number = arguments.get('number')
+            details = get_incident_by_number(number)
             responses.append({
                 "role": "tool",
                 "content": details,
